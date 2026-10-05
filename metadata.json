@@ -1,0 +1,8 @@
+{
+  "name": "RepoLens - GitHub Repository Code Explainer",
+  "description": "Understand any GitHub repository with AI-powered code analysis, file breakdowns, and beginner-friendly architecture explanations.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
