@@ -49,3 +49,22 @@ npm run dev
 ```
 
 Visit `http://localhost:3000` to use the application.
+
+## Deploying to Vercel
+
+The repository is pre-configured for Vercel Serverless Functions (`api/index.ts` + `vercel.json`):
+
+### Option 1: Vercel Web Dashboard (Recommended)
+1. Push this repository to GitHub.
+2. Go to [Vercel Dashboard](https://vercel.com/new) and click **Import Project**.
+3. Select your repository.
+4. Under **Environment Variables**, add:
+   - `GEMINI_API_KEY`: Your Google Gemini API Key
+5. Click **Deploy**.
+
+### Option 2: Vercel CLI
+```bash
+npm install -g vercel
+vercel
+# Follow prompts, set GEMINI_API_KEY when asked or in project settings
+```

@@ -177,23 +177,23 @@ async function walkDirectory(dir: string, rootDir: string): Promise<Array<{ file
 }
 
 export async function cloneOrFetchRepo(repoUrl: string): Promise<{ workDir: string; owner: string; repo: string }> {
-  const { cloneUrl, owner, repo } = normalizeRepoUrl(repoUrl);
+  const { owner, repo } = normalizeRepoUrl(repoUrl);
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), `repolens_${owner}_${repo}_`));
 
   let cloneSuccess = false;
   try {
-    // Attempt fast shallow git clone
+    // Attempt fast shallow git clone with strict timeout
     await execFileAsync('git', ['clone', '--depth', '1', `https://github.com/${owner}/${repo}.git`, tempDir], {
-      timeout: 45000,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      timeout: 15000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ASKPASS: 'echo' },
     });
     cloneSuccess = true;
   } catch (err: any) {
-    console.warn(`[RepoLens] git clone failed: ${err.message}. Trying GitHub REST archive API fallback...`);
+    console.warn(`[RepoLens] Local git clone unavailable or timed out: ${err.message}. Using GitHub REST API...`);
   }
 
   if (!cloneSuccess) {
-    // Fallback: fetch repository tree or zip archive via GitHub public API
+    // Fallback: fetch repository tree via GitHub public API
     try {
       const branches = ['main', 'master', 'HEAD'];
       let treeData: any = null;
@@ -206,6 +206,7 @@ export async function cloneOrFetchRepo(repoUrl: string): Promise<{ workDir: stri
             'User-Agent': 'RepoLens-App',
             'Accept': 'application/vnd.github.v3+json',
           },
+          signal: AbortSignal.timeout(8000),
         });
         if (res.ok) {
           treeData = await res.json();
@@ -215,27 +216,51 @@ export async function cloneOrFetchRepo(repoUrl: string): Promise<{ workDir: stri
       }
 
       if (!treeData || !Array.isArray(treeData.tree)) {
-        throw new Error(`Repository ${owner}/${repo} was not found on GitHub, or it is private/rate-limited.`);
+        throw new Error(`Repository "${owner}/${repo}" was not found or is private.`);
       }
 
-      // Filter and fetch files from raw.githubusercontent.com
+      // Pre-filter candidate blobs to avoid unnecessary downloads
       const filesToFetch = treeData.tree
-        .filter((item: any) => item.type === 'blob')
-        .slice(0, 100);
+        .filter((item: any) => {
+          if (item.type !== 'blob') return false;
+          const p = item.path.toLowerCase();
+          const ext = path.extname(p);
+          const parts = p.split('/');
+          const fileName = parts[parts.length - 1];
 
-      for (const item of filesToFetch) {
-        const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${usedBranch}/${item.path}`;
-        try {
-          const rawRes = await fetch(rawUrl, { headers: { 'User-Agent': 'RepoLens-App' } });
-          if (rawRes.ok) {
-            const content = await rawRes.text();
-            const destPath = path.join(tempDir, item.path);
-            await fs.mkdir(path.dirname(destPath), { recursive: true });
-            await fs.writeFile(destPath, content, 'utf-8');
+          if (parts.some((d: string) => SKIP_DIRS.has(d))) return false;
+          if (SKIP_FILENAMES.has(fileName)) return false;
+          if (BINARY_EXTENSIONS.has(ext)) return false;
+          if (CODE_EXTENSIONS.has(ext) || CONFIG_FILENAMES.has(fileName) || fileName.startsWith('readme')) {
+            return true;
           }
-        } catch {
-          // ignore single file error
-        }
+          return ['.json', '.yml', '.yaml', '.toml', '.xml', '.md'].includes(ext);
+        })
+        .slice(0, 45);
+
+      // Fast parallel download in concurrent chunks
+      const CHUNK_SIZE = 8;
+      for (let i = 0; i < filesToFetch.length; i += CHUNK_SIZE) {
+        const batch = filesToFetch.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          batch.map(async (item: any) => {
+            const rawUrl = `https://raw.githubusercontent.com/${owner}/${repo}/${usedBranch}/${item.path}`;
+            try {
+              const rawRes = await fetch(rawUrl, {
+                headers: { 'User-Agent': 'RepoLens-App' },
+                signal: AbortSignal.timeout(6000),
+              });
+              if (rawRes.ok) {
+                const content = await rawRes.text();
+                const destPath = path.join(tempDir, item.path);
+                await fs.mkdir(path.dirname(destPath), { recursive: true });
+                await fs.writeFile(destPath, content, 'utf-8');
+              }
+            } catch {
+              // Ignore single file fetch error
+            }
+          })
+        );
       }
     } catch (fallbackErr: any) {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
@@ -417,7 +442,7 @@ export async function generateExplanation(
   // Fallback to Ollama if available
   const ollamaHost = process.env.OLLAMA_HOST || 'http://127.0.0.1:11434';
   try {
-    const tagsRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
+    const tagsRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(1500) });
     if (tagsRes.ok) {
       const tagsData = await tagsRes.json();
       const models: string[] = (tagsData.models || []).map((m: any) => m.name);
@@ -435,7 +460,7 @@ export async function generateExplanation(
           stream: false,
           options: { temperature: 0.2 },
         }),
-        signal: AbortSignal.timeout(60000),
+        signal: AbortSignal.timeout(30000),
       });
 
       if (genRes.ok) {
@@ -457,7 +482,6 @@ export async function generateExplanation(
 }
 
 function generateStructuralExplanation(prompt: string): string {
-  // Extract project name, detected languages, and files from prompt
   const repoNameMatch = prompt.match(/Repository:\s*(.+)/);
   const repoName = repoNameMatch ? repoNameMatch[1].trim() : 'Project';
   const langMatch = prompt.match(/Detected languages:\s*(.+)/);

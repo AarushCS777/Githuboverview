@@ -171,9 +171,23 @@ export default function App() {
         body: JSON.stringify(payload),
       });
 
-      const data = await res.json();
+      const contentType = res.headers.get('content-type') || '';
+      let data: any;
+
+      if (contentType.includes('application/json')) {
+        data = await res.json();
+      } else {
+        const rawText = await res.text();
+        const cleanSnippet = rawText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 140);
+        throw new Error(
+          cleanSnippet
+            ? `Server response (${res.status}): ${cleanSnippet}`
+            : `Server returned non-JSON response with HTTP ${res.status}.`
+        );
+      }
+
       if (!res.ok) {
-        throw new Error(data.detail || 'Failed to explain repository');
+        throw new Error(data.detail || `Analysis failed with status ${res.status}`);
       }
 
       setProgressStep(100);
