@@ -1,5 +1,5 @@
 import path from 'path';
-import { app } from './src/backend/app.ts';
+import { app } from './src/backend/app';
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 const isDev = process.env.NODE_ENV !== 'production';

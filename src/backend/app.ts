@@ -6,7 +6,7 @@ import {
   extractRepository,
   buildPrompt,
   generateExplanation,
-} from './processor.ts';
+} from './processor';
 
 const execFileAsync = promisify(execFile);
 export const app = express();
