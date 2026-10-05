@@ -187,7 +187,7 @@ export default function App() {
       }
 
       if (!res.ok) {
-        throw new Error(data.detail || `Analysis failed with status ${res.status}`);
+        throw new Error(data.detail || data.message || `Analysis failed with status ${res.status}`);
       }
 
       setProgressStep(100);
